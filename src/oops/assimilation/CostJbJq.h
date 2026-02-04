@@ -95,7 +95,7 @@ template<typename MODEL, typename OBS> class CostJbJq : public CostJbState<MODEL
   std::shared_ptr<State_> background() const override {return bg_;}
 
  private:
-  std::unique_ptr<ModelSpaceCovarianceBase<MODEL>> B_;
+  static inline std::unique_ptr<ModelSpaceCovarianceBase<MODEL>> B_;
   std::shared_ptr<State_> bg_;
   const Variables ctlvars_;
   const Geometry_ * resol_;
@@ -113,10 +113,12 @@ template<typename MODEL, typename OBS>
 CostJbJq<MODEL, OBS>::CostJbJq(const std::vector<util::DateTime> & times,
                           const eckit::Configuration & config, const eckit::mpi::Comm & comm,
                           const Geometry_ & geom, const Variables & ctlvars)
-  : B_(), bg_(), ctlvars_(ctlvars), resol_(), conf_(config), commTime_(comm), jq_(), times_(times)
+  : bg_(), ctlvars_(ctlvars), resol_(), conf_(config), commTime_(comm), jq_(), times_(times)
 {
   Log::trace() << "CostJbJq::CostJbJq start" << std::endl;
-  bg_.reset(new State_(geom, eckit::LocalConfiguration(config, "background"), commTime_));
+  if (!conf_.getBool("no outer loop update", false) || !B_) {
+    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
+  }
   ASSERT(bg_->is_4d());
   ASSERT(bg_->times() == times);
   Log::trace() << "CostJbJq::CostJbJq done" << std::endl;

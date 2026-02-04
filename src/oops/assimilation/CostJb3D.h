@@ -96,7 +96,7 @@ template<typename MODEL, typename OBS> class CostJb3D : public CostJbState<MODEL
   std::shared_ptr<State_> background() const override {return bg_;}
 
  private:
-  std::unique_ptr<ModelSpaceCovarianceBase<MODEL>> B_;
+  static inline std::unique_ptr<ModelSpaceCovarianceBase<MODEL>> B_;
   std::shared_ptr<State_> bg_;
   const Variables ctlvars_;
   const Geometry_ * resol_;
@@ -109,7 +109,7 @@ template<typename MODEL, typename OBS> class CostJb3D : public CostJbState<MODEL
 template<typename MODEL, typename OBS>
 CostJb3D<MODEL, OBS>::CostJb3D(const util::DateTime & time, const eckit::Configuration & config,
                           const Geometry_ & geom, const Variables & ctlvars)
-  : B_(), bg_(), ctlvars_(ctlvars), resol_(), time_(1), conf_(config, "background error")
+  : bg_(), ctlvars_(ctlvars), resol_(), time_(1), conf_(config, "background error")
 {
   bg_.reset(new State_(geom, eckit::LocalConfiguration(config, "background"), oops::mpi::myself()));
   ASSERT(bg_->is_3d());
@@ -125,7 +125,11 @@ void CostJb3D<MODEL, OBS>::linearize(const CtrlVar_ & xb, const CtrlVar_ & fg,
   Log::trace() << "CostJb3D:linearize start" << std::endl;
   resol_ = &lowres;
   time_[0] = xb.state(0).validTime();  // not earlier because of FGAT
-  B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
+
+  if (!conf_.getBool("no outer loop update", false) || !B_) {
+    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
+  }
+
   Log::trace() << "CostJb3D:linearize done" << std::endl;
 }
 

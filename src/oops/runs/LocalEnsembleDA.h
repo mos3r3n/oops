@@ -85,6 +85,9 @@ class LocalEnsembleDADriverParameters : public Parameters {
   Parameter<bool> useControlMember{"use control member",
                   "use control member to center prior ensemble instead of the prior ensemble mean",
                   false, this};
+  Parameter<bool> recenterControlMember{"recenter control member",
+                  "prior ensemble perturbations recenter to the control member",
+                  true, this};
 };
 
 // -----------------------------------------------------------------------------
@@ -224,7 +227,19 @@ template <typename MODEL, typename OBS> class LocalEnsembleDA : public Applicati
     State4D_ bkg_mean = ens_xx.mean();
     // if control member is present use that instead of the ensemble mean
     if (params.driver.value().useControlMember) {
+      Log::info() << "Ensemble mean recentered to control member..." << std::endl;
       State4D_ controlMember(geometry, *params.controlMember.value());
+      if (params.driver.value().recenterControlMember) {
+        Log::info() << "Ensemble member recentered to control member..." << std::endl;
+        Increment4D_ recenter_increment(geometry, statevars, controlMember.validTimes());
+
+        for (size_t itime = 0; itime < controlMember.size(); ++itime) {
+         recenter_increment[itime].diff(controlMember[itime], bkg_mean[itime]);
+         for (size_t jj = 0; jj < nens; ++jj) {
+           ens_xx[jj][itime] += recenter_increment[itime];
+          }
+        }
+      }
       bkg_mean = controlMember;
     }
 
