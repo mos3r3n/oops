@@ -110,9 +110,7 @@ CostJb4D<MODEL, OBS>::CostJb4D(const std::vector<util::DateTime> & times,
   : bg_(), ctlvars_(ctlvars), resol_(), times_(times), conf_(config, "background error"),
     commTime_(mpi::clone(comm))
 {
-  if (!conf_.getBool("no outer loop update", false) || !B_) {
-    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
-  }
+  bg_.reset(new State_(geom, eckit::LocalConfiguration(config, "background"), commTime_)); 
   ASSERT(bg_->is_4d());
   ASSERT(bg_->times() == times);
   Log::trace() << "CostJb4D contructed." << std::endl;
@@ -124,7 +122,9 @@ template<typename MODEL, typename OBS>
 void CostJb4D<MODEL, OBS>::linearize(const CtrlVar_ & xb, const CtrlVar_ & fg,
                                      const Geometry_ & lowres) {
   resol_ = &lowres;
-  B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
+  if (!conf_.getBool("no outer loop update", false) || !B_) {
+    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
+  }
 }
 
 // -----------------------------------------------------------------------------

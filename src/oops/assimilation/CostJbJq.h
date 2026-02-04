@@ -116,9 +116,7 @@ CostJbJq<MODEL, OBS>::CostJbJq(const std::vector<util::DateTime> & times,
   : bg_(), ctlvars_(ctlvars), resol_(), conf_(config), commTime_(comm), jq_(), times_(times)
 {
   Log::trace() << "CostJbJq::CostJbJq start" << std::endl;
-  if (!conf_.getBool("no outer loop update", false) || !B_) {
-    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, conf_, xb.states(), fg.states()));
-  }
+  bg_.reset(new State_(geom, eckit::LocalConfiguration(config, "background"), commTime_));
   ASSERT(bg_->is_4d());
   ASSERT(bg_->times() == times);
   Log::trace() << "CostJbJq::CostJbJq done" << std::endl;
@@ -146,7 +144,9 @@ void CostJbJq<MODEL, OBS>::linearize(const CtrlVar_ & xb, const CtrlVar_ & fg,
   ASSERT(confs.size() == times_.size());
   eckit::LocalConfiguration myconf = confs[commTime_.rank()];
 
-  B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, myconf, xb.states(), fg.states()));
+  if (!conf_.getBool("no outer loop update", false) || !B_) {
+    B_.reset(CovarianceFactory<MODEL>::create(lowres, ctlvars_, myconf, xb.states(), fg.states()));
+  }
   Log::trace() << "CostJbJq::linearize done" << std::endl;
 }
 
