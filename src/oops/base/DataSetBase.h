@@ -342,6 +342,29 @@ std::vector<eckit::LocalConfiguration>
       ensconfs.push_back(conf);
       index++;
     }
+  } else if (config.has("members from template list")) { 
+    std::vector<eckit::LocalConfiguration> tmplList;
+    config.get("members from template list", tmplList);
+    nmembers_ = 0;
+    for (const auto & tmpl: tmplList) {
+      nmembers_ += tmpl.getInt("nmembers");
+    }
+    for (const auto & tmpl: tmplList) {
+      const int nmem = tmpl.getInt("nmembers");
+      const std::string pattern = tmpl.getString("pattern");
+      const int zpad = tmpl.getInt("zero padding", 0);
+      const std::vector<size_t> except = tmpl.getUnsignedVector("except", {});
+      size_t index = tmpl.getUnsigned("start", 1);
+      for (int jens = 0; jens < nmem; ++jens) {
+        while (std::count(except.begin(), except.end(), index)) {
+          index++;
+        }
+        eckit::LocalConfiguration conf(tmpl, "template");
+        util::seekAndReplace(conf, pattern, index, zpad);
+        ensconfs.push_back(conf);
+        index++;
+      }
+    }
   } else if (config.has("members")) {
     ensconfs = config.getSubConfigurations("members");
     nmembers_ = ensconfs.size();

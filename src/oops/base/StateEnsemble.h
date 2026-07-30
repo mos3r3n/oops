@@ -20,6 +20,7 @@
 #include "oops/util/ConfigFunctions.h"
 #include "oops/util/FieldSetOperations.h"
 #include "oops/util/Logger.h"
+#include "oops/util/parameters/OptionalParameter.h"   // FIX Bug 1: was missing
 #include "oops/util/parameters/Parameter.h"
 #include "oops/util/parameters/Parameters.h"
 #include "oops/util/parameters/RequiredParameter.h"
@@ -58,6 +59,11 @@ class StateEnsembleParameters : public Parameters {
                    "members of the state ensemble", this};
   OptionalParameter<StateMemberTemplateParameters_> states_template{"members from template",
                    "template to define members of the state ensemble", this};
+  /// List of members from template blocks — each entry has the same keys as
+  /// a standalone members from template block. Members are concatenated in order.
+  OptionalParameter<std::vector<eckit::LocalConfiguration>> states_template_list{
+                   "members from template list",
+                   "list of members from template blocks concatenated in order", this};
 
   /// Overridden to detect missing conditionally required parameters
   using Parameters::deserialize;
@@ -78,16 +84,24 @@ void StateEnsembleParameters<MODEL>::deserialize(util::CompositePath &path,
 {
   Parameters::deserialize(path, config);
 
-  if (states.value() == boost::none && states_template.value() == boost::none) {
+  const bool hasMembers      = (states.value() != boost::none);
+  const bool hasTemplate     = (states_template.value() != boost::none);
+  const bool hasTemplateList = (states_template_list.value() != boost::none);
+  const int nProvided = static_cast<int>(hasMembers)
+                      + static_cast<int>(hasTemplate)
+                      + static_cast<int>(hasTemplateList);
+
+  if (nProvided == 0) {
     throw eckit::UserError(
         path.path() +
         ": both members and members from template are missing",
         Here());
   }
-  if (states.value() != boost::none && states_template.value() != boost::none) {
+  if (nProvided > 1) {
     throw eckit::UserError(
         path.path() +
-        ": both members and members from template are present",
+        ": only one of members, members from template, or members from template list"
+        " may be provided",
         Here());
   }
 }
@@ -99,8 +113,15 @@ size_t StateEnsembleParameters<MODEL>::size() const
 {
   if (states.value() != boost::none) {
     return states.value()->size();
-  } else {
+  } else if (states_template.value() != boost::none) {
     return states_template.value()->nmembers.value();
+  } else {
+    // members from template list: sum nmembers across all entries
+    size_t total = 0;
+    for (const auto & entry : *states_template_list.value()) {
+      total += static_cast<size_t>(entry.getLong("nmembers"));
+    }
+    return total;
   }
 }
 
@@ -118,29 +139,31 @@ eckit::LocalConfiguration StateEnsembleParameters<MODEL>::getStateConfig(const s
   if (states.value() != boost::none) {
     // Explicit members
     return (*states.value())[ie];
-  } else {
-    // Members template
-
-    // Template configuration
+  } else if (states_template.value() != boost::none) {
+    // Single members from template (original path)
     eckit::LocalConfiguration stateConf(states_template.value()->state.value());
 
-    // Get correct index
+    const size_t nmembers = states_template.value()->nmembers.value();
+    ASSERT(ie < nmembers);
+
     size_t count = states_template.value()->start;
-    for (size_t jj = 0; jj <= ie; ++jj) {
-      // Check for excluded members
-      while (std::count(states_template.value()->except.value().begin(),
-             states_template.value()->except.value().end(), count)) {
+    for (size_t jj = 0; jj < ie; ++jj) {
+      while (std::count(
+          states_template.value()->except.value().begin(),
+          states_template.value()->except.value().end(),
+          count)) {
         count += 1;
       }
-
-      // Update counter
-      if (jj < ie) count += 1;
+      count += 1;
+    }
+    while (std::count(
+        states_template.value()->except.value().begin(),
+        states_template.value()->except.value().end(),
+        count)) {
+      count += 1;
     }
 
-    // Copy and update template configuration with pattern
     eckit::LocalConfiguration memberConf(stateConf);
-
-    // Replace pattern recursively in the configuration
     util::seekAndReplace(memberConf, states_template.value()->pattern,
       count, states_template.value()->zpad);
 
@@ -151,8 +174,49 @@ eckit::LocalConfiguration StateEnsembleParameters<MODEL>::getStateConfig(const s
     } else {
       ASSERT(rank == 0);
     }
-
     return memberConf;
+
+  } else {
+    // Members from template list — mirrors DataSetBase logic exactly.
+    // Find which list entry ie falls into, then apply the same
+    // seekAndReplace logic as the single members from template path.
+    size_t offset = 0;
+    for (const auto & entry : *states_template_list.value()) {
+      const size_t nmem    = static_cast<size_t>(entry.getLong("nmembers"));
+      const std::string pattern = entry.getString("pattern");
+      const size_t zpad    = static_cast<size_t>(entry.getLong("zero padding", 0));
+      const std::vector<size_t> except = entry.getUnsignedVector("except", {});
+      const size_t start   = static_cast<size_t>(entry.getLong("start", 1));
+
+      if (ie < offset + nmem) {
+        const size_t localIe = ie - offset;
+
+        // Compute member index (same as DataSetBase)
+        size_t count = start;
+        for (size_t jj = 0; jj < localIe; ++jj) {
+          while (std::count(except.begin(), except.end(), count)) count++;
+          count++;
+        }
+        while (std::count(except.begin(), except.end(), count)) count++;
+
+        eckit::LocalConfiguration memberConf(entry, "template");
+        util::seekAndReplace(memberConf, pattern, count, zpad);
+
+        if (memberConf.has("states")) {
+          std::vector<eckit::LocalConfiguration> confs =
+              memberConf.getSubConfigurations("states");
+          ASSERT(rank < confs.size());
+          memberConf = confs[rank];
+        } else {
+          ASSERT(rank == 0);
+        }
+        return memberConf;
+      }
+      offset += nmem;
+    }
+
+    ABORT("StateEnsembleParameters: getStateConfig failed to resolve member in template list");
+    return eckit::LocalConfiguration();
   }
 }
 
@@ -243,6 +307,7 @@ State<MODEL> StateEnsemble<MODEL>::mean() const {
 template<typename MODEL>
 Increment<MODEL> StateEnsemble<MODEL>::variance() const {
   ASSERT(states_.size() > 1);
+
   // Ensemble mean
   State<MODEL> ensmean = this->mean();
 
@@ -252,6 +317,7 @@ Increment<MODEL> StateEnsemble<MODEL>::variance() const {
 
   const double rr = 1.0/(static_cast<double>(states_.size()) - 1.0);
   Increment_ pert(ensVar);
+
   for (size_t iens = 0; iens < states_.size(); ++iens) {
     pert.zero();
     pert.diff(states_[iens], ensmean);
