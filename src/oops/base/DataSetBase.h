@@ -346,14 +346,16 @@ std::vector<eckit::LocalConfiguration>
   std::vector<eckit::LocalConfiguration> locals;
 
   std::vector<eckit::LocalConfiguration> ensconfs;
-  if (config.has("members from template")) {
-    eckit::LocalConfiguration tmpl(config, "members from template");
-    nmembers_ = tmpl.getInt("nmembers");
+
+  // Expand one "members from template" block into per-member configurations,
+  // appending them to ensconfs in order.
+  auto expandTemplate = [&ensconfs](const eckit::LocalConfiguration & tmpl) {
+    const size_t nmem = tmpl.getInt("nmembers");
     const std::string pattern = tmpl.getString("pattern");
     const int zpad = tmpl.getInt("zero padding", 0);
     const std::vector<size_t> except = tmpl.getUnsignedVector("except", {});
     size_t index = tmpl.getUnsigned("start", 1);
-    for (size_t jens = 0; jens < nmembers_; ++jens) {
+    for (size_t jens = 0; jens < nmem; ++jens) {
       while (std::count(except.begin(), except.end(), index)) {
         index++;
       }
@@ -362,6 +364,22 @@ std::vector<eckit::LocalConfiguration>
       ensconfs.push_back(conf);
       index++;
     }
+  };
+
+  if (config.has("members from template list")) {
+    // Multiple template blocks (e.g. ensembles split across several sources,
+    // such as scale bands); each block is expanded like "members from
+    // template" and the results are concatenated in the order listed.
+    const std::vector<eckit::LocalConfiguration> tmpls =
+      config.getSubConfigurations("members from template list");
+    for (const auto & tmpl : tmpls) {
+      expandTemplate(tmpl);
+    }
+    nmembers_ = ensconfs.size();
+  } else if (config.has("members from template")) {
+    eckit::LocalConfiguration tmpl(config, "members from template");
+    expandTemplate(tmpl);
+    nmembers_ = ensconfs.size();
   } else if (config.has("members")) {
     ensconfs = config.getSubConfigurations("members");
     nmembers_ = ensconfs.size();
